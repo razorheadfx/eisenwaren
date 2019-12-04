@@ -1,0 +1,11 @@
+[package]
+name = "delay-track"
+version = "0.1.0"
+authors = ["\"felix.girke\" <\"felix.girke@tu-dortmund.de\">"]
+edition = "2018"
+
+[dependencies]
+# pure rust plotting library
+plotters                    = { version = "0.2", features = ["bitmap","datetime","piston","palette_ext"] }
+structopt = "0.3"
+piston_window = "0.105"
