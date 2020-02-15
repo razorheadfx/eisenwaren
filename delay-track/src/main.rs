@@ -4,33 +4,36 @@ use piston_window::{EventLoop, PistonWindow, WindowSettings};
 
 use structopt::StructOpt;
 
-use std::process::{Command,Stdio};
 use std::collections::vec_deque::VecDeque;
+use std::process::{Command, Stdio};
 
 const FPS: u32 = 1;
 const LENGTH: u32 = 20;
 const N_DATA_POINTS: usize = (FPS * LENGTH) as usize;
 
 #[cfg(target_os = "windows")]
-const OS_SPECIFIC_COUNT_ARGUMENT : &str = "-n";
+const OS_SPECIFIC_COUNT_ARGUMENT: &str = "-n";
 
 #[cfg(not(target_os = "windows"))]
-const OS_SPECIFIC_COUNT_ARGUMENT : &str = "-c";
+const OS_SPECIFIC_COUNT_ARGUMENT: &str = "-c";
 
-
-
-#[derive(Debug,StructOpt)]
-struct Input{
-    #[structopt(name="HOST", min_values=1, help="One or more hosts to ping, either as IP or hostname")]
-    targets : Vec<String>,
+#[derive(Debug, StructOpt)]
+struct Input {
+    #[structopt(
+        name = "HOST",
+        min_values = 1,
+        help = "One or more hosts to ping, either as IP or hostname"
+    )]
+    targets: Vec<String>,
 }
 
 fn main() {
     let input = Input::from_args();
 
     let targets = input.targets;
+    assert!(!targets.is_empty(), "provide at least one target host");
 
-    println!("Checking delay to {:?}",&targets);
+    println!("Checking delay to {:?}", &targets);
 
     let mut window: PistonWindow = WindowSettings::new("Delay", [450, 300])
         .samples(4)
@@ -39,55 +42,56 @@ fn main() {
     window.set_max_fps(FPS as u64);
     let mut epoch = 0;
     let mut data = vec![VecDeque::new(); targets.len()];
-    let mut ps = vec!();
-    
+    let mut ps = vec![];
+
     println!("Press Ctrl-C to exit");
 
     // start with 100s and grow if the delay gets higher
     // but dont get smaller
-    let mut max_value_ms : u32 = 100;
+    let mut max_value_ms = 100f32;
 
     while let Some(_) = draw_piston_window(&mut window, |b| {
         let root = b.into_drawing_area();
         root.fill(&WHITE)?;
 
-        if epoch % FPS == 0{
-            for target in &targets{
-                let ping = Command::new("ping").args(&[OS_SPECIFIC_COUNT_ARGUMENT,"1","-w","1",target])
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .spawn()
-                .expect("Failed to start ping");
+        if epoch % FPS == 0 {
+            for target in &targets {
+                let ping = Command::new("ping")
+                    .args(&[OS_SPECIFIC_COUNT_ARGUMENT, "1", "-w", "1", target])
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .spawn()
+                    .expect("Failed to start ping");
 
                 ps.push(ping)
             }
-            
-            for (ping, data) in ps.drain(..).zip(data.iter_mut()){
+
+            for (ping, data) in ps.drain(..).zip(data.iter_mut()) {
                 let out = ping.wait_with_output().expect("Failed to get stdout");
 
+                dbg!(&out);
 
-            fn get_delay(reply : &str) -> Option<u32>{
-                reply.find("time=")
-                    .map(|p1| &reply[p1+"time=".len()..])
-                    .map(|d|(d, d.rfind("ms").expect("failed to find ms")))
-                    .map(|(d, i)| &d[..i])
-                    .map(|d| d.parse().unwrap())
+                let stdout = String::from_utf8(out.stdout).expect("Failed to convert to string");
+
+                for delay in stdout
+                    .split("time=")
+                    .filter_map(|s| s.find("ms").map(|i| (s, i)))
+                    .map(|(s, i)| &s[..i])
+                    .map(|s| s.trim_end())
+                    .map(|s| s.parse().ok())
+                {
+                    let delay: f32 = match delay {
+                        Some(d) => d,
+                        None => break,
+                    };
+                    if delay > max_value_ms {
+                        max_value_ms = delay;
+                    }
+
+                    data.push_back(delay);
+                }
             }
-
-            let stdout = String::from_utf8(out.stdout).expect("Failed to convert to string");
-            let delay = stdout.split("\n").filter(|s|s.contains("Reply")).filter_map(get_delay).next().unwrap_or(0);
-
-            if delay  > max_value_ms{
-                max_value_ms = delay;
-            }
-
-            data.push_back(delay);
-
-            }
-
-
         }
-
 
         let mut cc = ChartBuilder::on(&root)
             .margin(10)
@@ -105,7 +109,6 @@ fn main() {
             .y_desc("Delay [ms]")
             .axis_desc_style(("sans-serif", 15).into_font())
             .draw()?;
-
 
         for (idx, data) in (0..).zip(data.iter()) {
             cc.draw_series(LineSeries::new(
@@ -125,7 +128,9 @@ fn main() {
 
         epoch += 1;
         if epoch as usize > N_DATA_POINTS {
-            data.iter_mut().map(|d|d.pop_front()).fold((),|unit,_|unit);
+            data.iter_mut()
+                .map(|d| d.pop_front())
+                .fold((), |unit, _| unit);
         }
 
         Ok(())
